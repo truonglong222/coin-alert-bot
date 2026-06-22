@@ -1,9 +1,9 @@
 name: OKX Coin Alert
 
 on:
-  schedule:
-    - cron: "*/13 * * * *"
-  workflow_dispatch:
+  repository_dispatch:
+    types: [run-bot]
+
 
 jobs:
   run:
