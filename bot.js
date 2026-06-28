@@ -1,151 +1,137 @@
 import axios from "axios";
 import fs from "fs";
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID = process.env.CHAT_ID;
+const BOT_TOKEN = process.env.BOT_TOKEN || "BOT_TOKEN";
+const CHAT_ID = process.env.CHAT_ID || "CHAT_ID";
 
-const STATE_FILE = "./state.json";
-const COOLDOWN = 2 * 60 * 60 * 1000;
+const TELEGRAM_URL = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+const OKX_TICKERS = "https://www.okx.com/api/v5/market/tickers?instType=SWAP";
 
-// ================= STATE =================
-function loadState() {
+const CACHE_FILE = "./sent_cache.json";
+
+// =====================
+// Load / Save cache
+// =====================
+function loadCache() {
+  if (!fs.existsSync(CACHE_FILE)) return {};
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+    return JSON.parse(fs.readFileSync(CACHE_FILE, "utf8"));
   } catch {
     return {};
   }
 }
 
-function saveState(state) {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+function saveCache(cache) {
+  fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
 }
 
-// ================= TELEGRAM =================
-async function sendTelegram(text) {
-  await axios.post(
-    `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
-    {
-      chat_id: CHAT_ID,
-      text,
-      parse_mode: "Markdown"
-    }
-  );
+// =====================
+// Telegram send
+// =====================
+async function sendTelegram(message) {
+  await axios.post(TELEGRAM_URL, {
+    chat_id: CHAT_ID,
+    text: message,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+  });
 }
 
-// ================= COOLDOWN =================
-function canSend(lastTime) {
-  if (!lastTime) return true;
-  return Date.now() - lastTime > COOLDOWN;
+// =====================
+// Get all swap coins
+// =====================
+async function getAllCoins() {
+  const res = await axios.get(OKX_TICKERS);
+  return res.data.data;
 }
 
-// ================= OKX TICKERS =================
-async function getTickers() {
-  const res = await axios.get(
-    "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
-  );
+// =====================
+// Sort by volatility (24h)
+// =====================
+function getTop50Volatile(coins) {
+  return coins
+    .filter(c => c.instId && c.last && c.open24h)
+    .map(c => {
+      const change24h =
+        ((parseFloat(c.last) - parseFloat(c.open24h)) /
+          parseFloat(c.open24h)) *
+        100;
 
-  return res.data.data || [];
+      return {
+        instId: c.instId,
+        change24h: Math.abs(change24h),
+      };
+    })
+    .sort((a, b) => b.change24h - a.change24h)
+    .slice(0, 50);
 }
 
-// ================= CHANGE =================
-async function getChange(instId, bar) {
-  const res = await axios.get(
-    `https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=2`
-  );
+// =====================
+// Get candle change
+// =====================
+async function getChange(instId, bar = "15m", periods = 1) {
+  const url = `https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=${periods}`;
+  const res = await axios.get(url);
 
-  const d = res.data.data;
+  if (!res.data.data || res.data.data.length === 0) return 0;
 
-  if (!d || d.length < 2) return null;
-
-  const open = Number(d[1][1]);
-  const close = Number(d[0][4]);
-
-  if (open === 0) return null;
+  const candle = res.data.data[0];
+  const open = parseFloat(candle[1]);
+  const close = parseFloat(candle[4]);
 
   return ((close - open) / open) * 100;
 }
 
-// ================= MAIN =================
-async function run() {
-  const state = loadState();
+// =====================
+// Main logic
+// =====================
+async function runBot() {
+  try {
+    const cache = loadCache();
+    const now = Date.now();
 
-  const tickers = await getTickers();
+    const coins = await getAllCoins();
+    const top50 = getTop50Volatile(coins);
 
-  // Chỉ lấy coin tăng >7% trong 24h
-  const usdtCoins = tickers
-    .filter(t => t.instId.endsWith("-USDT"))
-    .map(t => {
-      const last = Number(t.last);
-      const open24h = Number(t.open24h);
+    let results = [];
 
-      const change24h =
-        open24h > 0
-          ? ((last - open24h) / open24h) * 100
-          : 0;
+    for (const coin of top50) {
+      const instId = coin.instId;
 
-      return {
-        instId: t.instId,
-        change24h
-      };
-    })
-    .filter(c => c.change24h > 7)
-    .sort((a, b) => b.change24h - a.change24h);
+      try {
+        const change15m = await getChange(instId, "15m", 1);
+        const change4h = await getChange(instId, "4H", 1);
 
-  let alerts = [];
+        const condition1 = change15m > 4;
+        const condition2 = change4h > -5 && change4h < 5;
 
-  for (const coin of usdtCoins) {
-    const symbol = coin.instId;
+        if (condition1 && condition2) {
+          // chống spam 2h
+          if (cache[instId] && now - cache[instId] < 2 * 60 * 60 * 1000) {
+            continue;
+          }
 
-    try {
-      // 15 phút > 2%
-      const chg15m = await getChange(symbol, "15m");
+          cache[instId] = now;
 
-      if (chg15m === null || chg15m <= 2) continue;
-
-      // Biến động 2 giờ
-      const chg2h = await getChange(symbol, "2H");
-
-      if (chg2h === null) continue;
-
-      // Điều kiện mới:
-      // -5 < (2h - 15m) < +5
-      const diff = chg2h - chg15m;
-
-      if (diff <= -5 || diff >= 5) continue;
-
-      // Cooldown 2 giờ
-      if (!canSend(state[symbol])) continue;
-
-      alerts.push({
-        symbol,
-        change24h: coin.change24h,
-        chg15m,
-        chg2h,
-        diff
-      });
-
-      state[symbol] = Date.now();
-
-    } catch (e) {
-      continue;
+          results.push(
+            `🚀 BUY SIGNAL\nCoin: ${instId}\n15m: ${change15m.toFixed(
+              2
+            )}%\n4h: ${change4h.toFixed(2)}%`
+          );
+        }
+      } catch (e) {
+        continue;
+      }
     }
+
+    if (results.length > 0) {
+      await sendTelegram(results.join("\n\n"));
+      saveCache(cache);
+    }
+  } catch (err) {
+    console.error("Bot error:", err.message);
   }
-
-  saveState(state);
-
-  if (alerts.length === 0) return;
-
-  let msg = `🚨 *OKX ALERT (>7% 24H)*\n\n`;
-
-  for (const a of alerts) {
-    msg += `🪙 ${a.symbol}\n`;
-    msg += `24h: +${a.change24h.toFixed(2)}%\n`;
-    msg += `15m: +${a.chg15m.toFixed(2)}%\n`;
-    msg += `2h: ${a.chg2h.toFixed(2)}%\n`;
-    msg += `2h-15m: ${a.diff.toFixed(2)}%\n\n`;
-  }
-
-  await sendTelegram(msg);
 }
 
-run();
+// Run
+runBot();
