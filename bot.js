@@ -90,21 +90,21 @@ function percent(open, close) {
 // ================= MAIN =================
 async function checkCoin(symbol, change24) {
     try {
-        // 1. Check nến 5m (Lấy cây index 1 đã đóng cửa hoàn chỉnh)
-        const candles5 = await getCandles(symbol, "5m", 3);
-        if (candles5.length < 2) return;
+        // 1. Check nến 5m (Giữ nguyên lấy nến [0] đang chạy)
+        const candles5 = await getCandles(symbol, "5m", 2);
+        if (candles5.length < 1) return;
 
-        const c5 = candles5[1]; 
+        const c5 = candles5[0]; 
         const change5 = percent(Number(c5[1]), Number(c5[4]));
 
-        // Nến 5m vừa rồi phải tăng mạnh > 3%
+        // Nến 5m hiện tại phải tăng mạnh > 3%
         if (change5 <= 3) return;
 
-        // 2. Check nến 2H (Lấy cây index 1 đã đóng cửa hoàn chỉnh)
-        const candles2h = await getCandles(symbol, "2H", 2);
-        if (candles2h.length < 2) return;
+        // 2. Check nến 2H (Giữ nguyên lấy nến [0] đang chạy)
+        const candles2h = await getCandles(symbol, "2H", 1);
+        if (candles2h.length < 1) return;
 
-        const c2 = candles2h[1];
+        const c2 = candles2h[0];
         const change2h = percent(Number(c2[1]), Number(c2[4]));
 
         // CHỈ CHẶN KHI TĂNG >= 10%. Nến âm (giảm sâu) vẫn được duyệt bình thường
@@ -122,8 +122,8 @@ async function checkCoin(symbol, change24) {
 
         const msg = `🟢 <b>Buy Signal (Futures)</b>\n\n` +
                     `Coin: <a href="${tradeUrl}"><b>${symbol}</b></a>\n\n` +
-                    `5m (Vừa đóng): <b>${change5.toFixed(2)}%</b>\n` +
-                    `2H (Vừa đóng): <b>${change2h.toFixed(2)}%</b>\n` +
+                    `5m (Hiện tại): <b>${change5.toFixed(2)}%</b>\n` +
+                    `2H (Hiện tại): <b>${change2h.toFixed(2)}%</b>\n` +
                     `24H: <b>${change24.toFixed(2)}%</b>\n\n` +
                     `🔗 <a href="${tradeUrl}">Mở đồ thị & Giao dịch trên OKX</a>`;
 
@@ -147,5 +147,6 @@ async function main() {
         console.error("Main Process Error:", e.message);
     }
 }
+
 // Chạy bot
 main();
