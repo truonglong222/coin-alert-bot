@@ -108,7 +108,7 @@ async function checkCoin(symbol, change24) {
         const change2h = percent(Number(c2[1]), Number(c2[4]));
 
         // CHỈ CHẶN KHI TĂNG >= 10%. Nến âm (giảm sâu) vẫn được duyệt bình thường
-        if (change2h >= 10) return; 
+        if (change2h >= 7) return; 
 
         // 3. Giới hạn biên độ 24h để tránh đu đỉnh coin đã tăng quá cao
         if (change24 >= 25) return;
