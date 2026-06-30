@@ -18,7 +18,8 @@ jobs:
 
       - run: npm install axios
 
-      - run: node bot.js
+      - run: node buy.js
+      - run: node sell.js
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
